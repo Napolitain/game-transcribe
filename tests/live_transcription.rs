@@ -62,7 +62,9 @@ fn pcm16_mono_16khz(wav: &[u8]) -> Vec<f32> {
     }
     assert!(valid_format, "sample must be 16 kHz mono PCM16");
     data.unwrap()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|bytes| f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32_768.0)
         .collect()
 }
