@@ -63,6 +63,7 @@ const FIELD_FOCUS: i32 = 2007;
 const FIELD_OPEN_KEY: i32 = 2008;
 const FIELD_SUBMIT_KEY: i32 = 2009;
 const FIELD_STARTUP: i32 = 2010;
+const FIELD_END: i32 = 2011;
 const BUTTON_SAVE: usize = 1;
 const BUTTON_CANCEL: usize = 2;
 
@@ -378,7 +379,7 @@ fn show_settings(parent: HWND, store: ConfigStore, engine: EngineHandle) -> Resu
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             570,
-            500,
+            540,
             Some(parent),
             None,
             Some(instance),
@@ -439,7 +440,8 @@ fn create_settings_controls(
     let labels = [
         ("Microphone", FIELD_MICROPHONE),
         ("Language code", FIELD_LANGUAGE),
-        ("Wake phrase", FIELD_WAKE),
+        ("Start phrase", FIELD_WAKE),
+        ("End phrase", FIELD_END),
         ("Recognition model", FIELD_MODEL),
         ("End silence (ms)", FIELD_SILENCE),
         ("Maximum speech (sec)", FIELD_MAX_SECONDS),
@@ -491,7 +493,7 @@ fn create_settings_controls(
         "Launch at login",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(BS_AUTOCHECKBOX as u32),
         190,
-        380,
+        416,
         180,
         25,
         FIELD_STARTUP,
@@ -503,7 +505,7 @@ fn create_settings_controls(
         "Save",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
         360,
-        420,
+        456,
         80,
         28,
         BUTTON_SAVE as i32,
@@ -515,7 +517,7 @@ fn create_settings_controls(
         "Cancel",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
         455,
-        420,
+        456,
         80,
         28,
         BUTTON_CANCEL as i32,
@@ -523,6 +525,7 @@ fn create_settings_controls(
 
     set_text(window, FIELD_LANGUAGE, &config.language)?;
     set_text(window, FIELD_WAKE, &config.wake_phrase)?;
+    set_text(window, FIELD_END, &config.end_phrase)?;
     set_text(window, FIELD_SILENCE, &config.silence_ms.to_string())?;
     set_text(
         window,
@@ -667,6 +670,7 @@ fn save_settings(window: HWND, state: &mut SettingsState) -> Result<()> {
         .and_then(|index| state.microphones.get(index).cloned());
     config.language = get_text(window, FIELD_LANGUAGE)?;
     config.wake_phrase = get_text(window, FIELD_WAKE)?;
+    config.end_phrase = get_text(window, FIELD_END)?;
     config.model = ModelKind::from_index(combo_selection(get_control(window, FIELD_MODEL)?));
     config.silence_ms = get_number(window, FIELD_SILENCE, "end silence")?;
     config.max_message_seconds = get_number(window, FIELD_MAX_SECONDS, "maximum speech")?;

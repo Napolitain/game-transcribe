@@ -9,7 +9,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, select};
 use crate::{
     audio::{AudioCapture, AudioEvent},
     config::{AppConfig, ConfigStore},
-    message::extract_after_wake_phrase,
+    message::extract_between_phrases,
     model,
     platform::input::{self, KeySpec, WindowToken},
     transcription::Transcriber,
@@ -301,7 +301,9 @@ fn process_utterance(
         thread::sleep(Duration::from_millis(500));
         return PendingOutcome::Continue;
     }
-    let Some(message) = extract_after_wake_phrase(&transcript.text, &config.wake_phrase) else {
+    let Some(message) =
+        extract_between_phrases(&transcript.text, &config.wake_phrase, &config.end_phrase)
+    else {
         return PendingOutcome::Continue;
     };
 

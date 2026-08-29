@@ -1,23 +1,41 @@
-/// Removes a leading wake phrase while preserving the original message text.
-/// Matching is case-insensitive and ignores punctuation around wake words.
-pub fn extract_after_wake_phrase<'a>(transcript: &'a str, wake_phrase: &str) -> Option<&'a str> {
-    let wanted: Vec<String> = words(wake_phrase).map(|word| word.to_lowercase()).collect();
-    if wanted.is_empty() {
+/// Extracts text surrounded by required start and end phrases.
+/// Matching is case-insensitive and ignores punctuation around marker words.
+pub fn extract_between_phrases<'a>(
+    transcript: &'a str,
+    start_phrase: &str,
+    end_phrase: &str,
+) -> Option<&'a str> {
+    let wanted_start: Vec<String> = words(start_phrase)
+        .map(|word| word.to_lowercase())
+        .collect();
+    let wanted_end: Vec<String> = words(end_phrase).map(|word| word.to_lowercase()).collect();
+    if wanted_start.is_empty() || wanted_end.is_empty() {
         return None;
     }
 
-    let mut found = words_with_end(transcript);
-    let mut end = 0;
-    for expected in wanted {
-        let (actual, word_end) = found.next()?;
-        if actual.to_lowercase() != expected {
-            return None;
-        }
-        end = word_end;
+    let found = word_spans(transcript);
+    if found.len() <= wanted_start.len() + wanted_end.len() {
+        return None;
+    }
+    let starts_correctly = found
+        .iter()
+        .zip(&wanted_start)
+        .all(|((actual, _, _), expected)| actual.to_lowercase() == *expected);
+    let end_offset = found.len() - wanted_end.len();
+    let ends_correctly = found[end_offset..]
+        .iter()
+        .zip(&wanted_end)
+        .all(|((actual, _, _), expected)| actual.to_lowercase() == *expected);
+    if !starts_correctly || !ends_correctly {
+        return None;
     }
 
-    let message = transcript[end..]
+    let message_start = found[wanted_start.len()].1;
+    let message_end = found[end_offset].1;
+
+    let message = transcript[message_start..message_end]
         .trim_start_matches(|ch: char| ch.is_whitespace() || ",.:;!?-–—".contains(ch))
+        .trim_end_matches(|ch: char| ch.is_whitespace() || ",:;-–—".contains(ch))
         .trim();
     (!message.is_empty()).then_some(message)
 }
@@ -27,27 +45,24 @@ fn words(text: &str) -> impl Iterator<Item = &str> {
         .filter(|word| !word.is_empty())
 }
 
-fn words_with_end(text: &str) -> impl Iterator<Item = (&str, usize)> {
+fn word_spans(text: &str) -> Vec<(&str, usize, usize)> {
+    let mut found = Vec::new();
     let mut start = None;
-    text.char_indices()
-        .filter_map(move |(index, ch)| {
-            let is_word = ch.is_alphanumeric() || ch == '\'';
-            match (start, is_word) {
-                (None, true) => {
-                    start = Some(index);
-                    None
-                }
-                (Some(word_start), false) => {
-                    start = None;
-                    Some((&text[word_start..index], index))
-                }
-                _ => None,
+    for (index, ch) in text.char_indices() {
+        let is_word = ch.is_alphanumeric() || ch == '\'';
+        match (start, is_word) {
+            (None, true) => start = Some(index),
+            (Some(word_start), false) => {
+                found.push((&text[word_start..index], word_start, index));
+                start = None;
             }
-        })
-        .chain(
-            std::iter::once_with(move || start.map(|word_start| (&text[word_start..], text.len())))
-                .flatten(),
-        )
+            _ => {}
+        }
+    }
+    if let Some(word_start) = start {
+        found.push((&text[word_start..], word_start, text.len()));
+    }
+    found
 }
 
 #[cfg(test)]
@@ -55,34 +70,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strips_case_insensitive_wake_phrase() {
+    fn extracts_viper_message_between_required_markers() {
         assert_eq!(
-            extract_after_wake_phrase("Game Chat, defend the bridge!", "game chat"),
+            extract_between_phrases("Viper, defend the bridge! Over.", "Viper", "over"),
             Some("defend the bridge!")
         );
     }
 
     #[test]
-    fn tolerates_leading_whisper_punctuation() {
+    fn tolerates_case_and_whisper_punctuation() {
         assert_eq!(
-            extract_after_wake_phrase("[game] chat: hello", "game chat"),
+            extract_between_phrases("[VIPER]: hello -- OVER!", "viper", "over"),
             Some("hello")
         );
     }
 
     #[test]
-    fn rejects_non_leading_or_empty_message() {
+    fn rejects_missing_misplaced_or_empty_markers() {
+        assert_eq!(extract_between_phrases("hello over", "Viper", "over"), None);
         assert_eq!(
-            extract_after_wake_phrase("hello game chat", "game chat"),
+            extract_between_phrases("Viper hello", "Viper", "over"),
             None
         );
-        assert_eq!(extract_after_wake_phrase("game chat", "game chat"), None);
+        assert_eq!(
+            extract_between_phrases("hello Viper there over", "Viper", "over"),
+            None
+        );
+        assert_eq!(
+            extract_between_phrases("Viper hello over there", "Viper", "over"),
+            None
+        );
+        assert_eq!(extract_between_phrases("Viper over", "Viper", "over"), None);
     }
 
     #[test]
-    fn supports_unicode_wake_phrase() {
+    fn supports_multiword_and_unicode_phrases() {
         assert_eq!(
-            extract_after_wake_phrase("Équipe chat, avancez", "équipe chat"),
+            extract_between_phrases(
+                "Équipe chat, avancez, message terminé",
+                "équipe chat",
+                "message terminé"
+            ),
             Some("avancez")
         );
     }

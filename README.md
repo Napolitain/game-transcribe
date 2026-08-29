@@ -1,13 +1,13 @@
 # Game Transcribe
 
-Game Transcribe is a lightweight Windows 11 tray application that turns a spoken, wake-phrase-prefixed message into normal keyboard input for game chat. Audio and recognition stay on the machine.
+Game Transcribe is a lightweight Windows 11 tray application that turns a spoken message between configurable start and end phrases into normal keyboard input for game chat. Audio and recognition stay on the machine.
 
 The default flow is:
 
 1. Leave the app listening in the notification area.
-2. Say `game chat`, followed by the message.
-3. After 700 ms of silence, the app recognizes the utterance locally.
-4. If the original foreground window is still focused, it sends `Enter`, types the message, and sends `Enter` again.
+2. Say `Viper`, the message, then `over` — for example, `Viper, defend the bridge, over`.
+3. After 700 ms of silence, the app recognizes the utterance locally and requires both marker phrases at the transcript boundaries.
+4. It strips `Viper` and `over`. If the original foreground window is still focused, it sends `Enter`, types only the message, and sends `Enter` again.
 
 If focus changed during recognition, the message waits for the exact original window for up to 10 seconds. It is discarded rather than redirected to another application.
 
@@ -27,7 +27,7 @@ Start `Game Transcribe` from the Start Menu or run `game-transcribe`. The first 
 - No cloud speech service, local HTTP server, overlay, clipboard access, process injection, or game-memory access.
 - No audio recordings, transcripts, or transcript history are written to disk or logs.
 - Only one message can be pending. Microphone forwarding is disabled during recognition, focus waiting, and typing.
-- Messages without the wake phrase at the beginning are ignored.
+- Messages without the configured start phrase at the beginning and end phrase at the end are ignored.
 - Held modifiers, unsupported keyboard-layout characters, focus changes, incomplete `SendInput` calls, and low-confidence recognition all prevent submission.
 - The app never elevates itself or attempts to bypass anti-cheat. Windows UIPI and individual games can reject synthesized input.
 
@@ -75,7 +75,7 @@ Right-click the notification icon to pause or resume listening, cancel a pending
 Settings cover:
 
 - microphone and recognition language code;
-- wake phrase and Tiny/Base quantized model;
+- start phrase, end phrase, and Tiny/Base quantized model;
 - end-of-utterance silence and maximum speech duration;
 - inter-key typing delay and focus-return timeout;
 - open-chat and submit keys (`Enter` or one layout-mappable character);
@@ -91,7 +91,7 @@ Start compatibility testing in Notepad, then test each game in windowed, borderl
 
 ## Verification
 
-The test suite covers configuration round trips and validation, wake-phrase matching, streaming resampling, VAD utterance boundaries and duration rejection, model checksum verification, and key parsing. The standard release gate is:
+The test suite covers configuration migration and validation, strict start/end phrase matching, streaming resampling, VAD utterance boundaries and duration rejection, model checksum verification, and key parsing. The standard release gate is:
 
 ```powershell
 cargo fmt --all -- --check

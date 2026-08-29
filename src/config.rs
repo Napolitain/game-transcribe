@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::ModelKind;
 
-pub const CURRENT_CONFIG_VERSION: u32 = 1;
+pub const CURRENT_CONFIG_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub microphone: Option<String>,
     pub language: String,
     pub wake_phrase: String,
+    pub end_phrase: String,
     pub model: ModelKind,
     pub silence_ms: u32,
     pub max_message_seconds: u32,
@@ -36,7 +37,8 @@ impl Default for AppConfig {
             version: CURRENT_CONFIG_VERSION,
             microphone: None,
             language: "en".to_owned(),
-            wake_phrase: "game chat".to_owned(),
+            wake_phrase: "Viper".to_owned(),
+            end_phrase: "over".to_owned(),
             model: ModelKind::TinyQ5_1,
             silence_ms: 700,
             max_message_seconds: 15,
@@ -61,6 +63,9 @@ impl AppConfig {
         }
         if self.wake_phrase.trim().is_empty() {
             bail!("wake phrase cannot be empty");
+        }
+        if self.end_phrase.trim().is_empty() {
+            bail!("end phrase cannot be empty");
         }
         if !(200..=3_000).contains(&self.silence_ms) {
             bail!("end-of-message silence must be between 200 and 3000 ms");
@@ -119,8 +124,18 @@ impl ConfigStore {
         }
         let bytes =
             fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
-        let config: AppConfig = serde_json::from_slice(&bytes)
+        let mut config: AppConfig = serde_json::from_slice(&bytes)
             .with_context(|| format!("failed to parse {}", path.display()))?;
+        if config.version == 1 {
+            config.version = CURRENT_CONFIG_VERSION;
+            if config.wake_phrase.eq_ignore_ascii_case("game chat") {
+                config.wake_phrase = AppConfig::default().wake_phrase;
+            }
+            config.end_phrase = AppConfig::default().end_phrase;
+            config.validate()?;
+            self.save(&config)?;
+            return Ok(config);
+        }
         config.validate()?;
         Ok(config)
     }
@@ -167,6 +182,7 @@ mod tests {
         let store = ConfigStore::at(&root);
         let expected = AppConfig {
             wake_phrase: "team radio".to_owned(),
+            end_phrase: "message complete".to_owned(),
             ..AppConfig::default()
         };
         store.save(&expected).unwrap();
@@ -188,7 +204,45 @@ mod tests {
         let config: AppConfig = serde_json::from_str(r#"{"wake_phrase":"radio"}"#).unwrap();
         assert_eq!(config.version, CURRENT_CONFIG_VERSION);
         assert_eq!(config.wake_phrase, "radio");
+        assert_eq!(config.end_phrase, "over");
         assert_eq!(config.model, ModelKind::TinyQ5_1);
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn migrates_version_one_defaults_to_viper_and_over() {
+        let root = test_root("config-migration-v1");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("config.json"),
+            r#"{"version":1,"wake_phrase":"game chat","language":"en"}"#,
+        )
+        .unwrap();
+
+        let store = ConfigStore::at(&root);
+        let migrated = store.load().unwrap();
+        assert_eq!(migrated.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(migrated.wake_phrase, "Viper");
+        assert_eq!(migrated.end_phrase, "over");
+        assert_eq!(store.load().unwrap(), migrated);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migration_preserves_a_custom_wake_phrase() {
+        let root = test_root("config-migration-custom-wake");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("config.json"),
+            r#"{"version":1,"wake_phrase":"radio check","language":"en"}"#,
+        )
+        .unwrap();
+
+        let migrated = ConfigStore::at(&root).load().unwrap();
+        assert_eq!(migrated.wake_phrase, "radio check");
+        assert_eq!(migrated.end_phrase, "over");
+        let _ = fs::remove_dir_all(root);
     }
 }
