@@ -1,0 +1,8 @@
+[env]
+# whisper.cpp is built by CMake. Force a generator/compiler pair that works
+# with current MSVC targets even when a newer Visual Studio version is present
+# than the locally installed CMake knows how to name.
+CMAKE_GENERATOR = "Ninja"
+CC_x86_64_pc_windows_msvc = "clang-cl.exe"
+CXX_x86_64_pc_windows_msvc = "clang-cl.exe"
+CXXFLAGS_x86_64_pc_windows_msvc = "/EHsc"
