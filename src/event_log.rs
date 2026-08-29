@@ -1,65 +1,31 @@
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::io::{self, Write};
 
 use windows::Win32::System::SystemInformation::GetSystemTime;
 
-const LOG_NAME: &str = "events.log";
-const BACKUP_NAME: &str = "events.log.1";
-const MAX_LOG_BYTES: u64 = 256 * 1024;
 const MAX_DETAIL_CHARS: usize = 2_048;
 
-#[derive(Debug)]
-pub struct EventLog {
-    path: PathBuf,
-    backup: PathBuf,
-    max_bytes: u64,
-}
+#[derive(Debug, Default)]
+pub struct EventLog;
 
 impl EventLog {
-    pub fn new(root: &Path) -> Self {
-        Self::with_limit(root, MAX_LOG_BYTES)
-    }
-
-    fn with_limit(root: &Path, max_bytes: u64) -> Self {
-        Self {
-            path: root.join(LOG_NAME),
-            backup: root.join(BACKUP_NAME),
-            max_bytes,
-        }
+    pub const fn new() -> Self {
+        Self
     }
 
     pub fn record(&self, event: &str, detail: &str) {
-        let _ = self.try_record(event, detail);
+        let mut output = io::stdout().lock();
+        let _ = writeln!(output, "{}", format_line(event, detail));
+        let _ = output.flush();
     }
+}
 
-    fn try_record(&self, event: &str, detail: &str) -> std::io::Result<()> {
-        let timestamp = utc_timestamp();
-        let event = one_line(event);
-        let detail = one_line(detail);
-        let line = format!("{timestamp} | {event} | {detail}\n");
-
-        if let Some(root) = self.path.parent() {
-            fs::create_dir_all(root)?;
-        }
-        let current_bytes = fs::metadata(&self.path).map_or(0, |metadata| metadata.len());
-        if current_bytes > 0 && current_bytes.saturating_add(line.len() as u64) > self.max_bytes {
-            match fs::remove_file(&self.backup) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
-            }
-            fs::rename(&self.path, &self.backup)?;
-        }
-
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        file.write_all(line.as_bytes())
-    }
+fn format_line(event: &str, detail: &str) -> String {
+    format!(
+        "{} | {} | {}",
+        utc_timestamp(),
+        one_line(event),
+        one_line(detail)
+    )
 }
 
 fn utc_timestamp() -> String {
@@ -101,36 +67,17 @@ fn one_line(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn test_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("game-transcribe-log-{name}-{}", std::process::id()))
+    #[test]
+    fn formats_single_line_events() {
+        let line = format_line("sentence", "defend\nthe\tbridge");
+        assert!(line.ends_with("| sentence | defend the bridge"));
+        assert!(!line.contains('\n'));
+        assert!(!line.contains('\t'));
     }
 
     #[test]
-    fn writes_single_line_events() {
-        let root = test_root("single-line");
-        let _ = fs::remove_dir_all(&root);
-        let log = EventLog::new(&root);
-        log.record("sentence", "defend\nthe\tbridge");
-
-        let contents = fs::read_to_string(root.join(LOG_NAME)).unwrap();
-        assert!(contents.ends_with("| sentence | defend the bridge\n"));
-        assert_eq!(contents.lines().count(), 1);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn keeps_one_bounded_backup() {
-        let root = test_root("rotation");
-        let _ = fs::remove_dir_all(&root);
-        let log = EventLog::with_limit(&root, 100);
-        for index in 0..8 {
-            log.record("vad", &format!("event={index} padding=abcdefghij"));
-        }
-
-        assert!(root.join(LOG_NAME).exists());
-        assert!(root.join(BACKUP_NAME).exists());
-        assert!(fs::metadata(root.join(LOG_NAME)).unwrap().len() <= 100);
-        assert!(fs::metadata(root.join(BACKUP_NAME)).unwrap().len() <= 100);
-        let _ = fs::remove_dir_all(root);
+    fn truncates_excessive_detail() {
+        let detail = "x".repeat(MAX_DETAIL_CHARS + 1);
+        assert!(one_line(&detail).ends_with(" [truncated]"));
     }
 }

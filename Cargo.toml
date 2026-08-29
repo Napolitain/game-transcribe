@@ -1,8 +1,9 @@
 [package]
 name = "game-transcribe"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
+default-run = "game-transcribe"
 description = "Lightweight, offline voice-to-game-chat client for Windows"
 license = "MIT"
 homepage = "https://github.com/Napolitain/game-transcribe"

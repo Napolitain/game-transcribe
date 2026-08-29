@@ -107,7 +107,7 @@ impl EngineHandle {
 }
 
 fn run_worker(store: ConfigStore, controls: Receiver<Control>, status: Arc<RwLock<Status>>) {
-    let events = EventLog::new(store.root());
+    let events = EventLog::new();
     loop {
         set_status(&status, AppState::Starting, None);
         let config = match store.load() {

@@ -25,7 +25,7 @@ Start `Game Transcribe` from the Start Menu or run `game-transcribe`. The first 
 ## Safety and privacy
 
 - No cloud speech service, local HTTP server, overlay, clipboard access, process injection, or game-memory access.
-- No audio recordings or rejected transcripts are written to disk. The bounded event log records accepted message text as described below.
+- No audio recordings, transcripts, or event logs are written to disk by the app. Accepted message text appears only in the optional stdout stream described below.
 - Only one message can be pending. Microphone forwarding is disabled during recognition, focus waiting, and typing.
 - Messages without the configured start phrase at the beginning and end phrase at the end are ignored.
 - Held modifiers, unsupported keyboard-layout characters, focus changes, incomplete `SendInput` calls, and low-confidence recognition all prevent submission.
@@ -54,7 +54,13 @@ For a read-only microphone/configuration check that does not start the tray engi
 cargo run -- --self-check
 ```
 
-Create an optimized GUI binary with:
+Print the binary version without loading configuration, audio, or the model:
+
+```powershell
+game-transcribe --version
+```
+
+Create the optimized terminal and GUI binaries with:
 
 ```powershell
 cargo build --release
@@ -66,7 +72,7 @@ An opt-in live integration test downloads the Tiny Q5 model, verifies its checks
 cargo test --test live_transcription -- --ignored
 ```
 
-The result is `target\release\game-transcribe.exe`. Release builds do not open a console window.
+The results are `target\release\game-transcribe.exe` for terminal use and `target\release\game-transcribe-gui.exe` for silent Start Menu or launch-at-login use. Both run the same engine and settings; only the console binary exposes stdout.
 
 ## Tray controls
 
@@ -83,16 +89,16 @@ Settings cover:
 
 Settings and verified models live under the app's Windows local application-data directory. Launch-at-login uses the current user's `Run` registry key and never requires administrator rights.
 
-## Minimal event log
+## Minimal stdout log
 
-The app writes a compact UTF-8 event log to `%LOCALAPPDATA%\GameTranscribe\GameTranscribe\data\events.log`. It records only:
+Run `game-transcribe` from PowerShell or another terminal to see the compact event stream. A Start Menu launch has no visible terminal, and the app does not create a log file. It prints only:
 
 - VAD start and end, including completed audio duration or rejection reason;
 - whether the configured start and end phrases were detected;
 - the selected sentence after both phrases are stripped;
 - whether sending succeeded, failed, or was skipped.
 
-Each entry has a UTC timestamp and is kept on one line. The current log rotates at 256 KiB to `events.log.1`; only those two files are retained, limiting normal log storage to roughly 512 KiB. Accepted sentence text is therefore stored locally until rotation, while audio and rejected transcript text are never logged.
+Each entry has a UTC timestamp and is kept on one line. Accepted sentence text is printed only after confidence and both phrase checks pass. Audio and rejected transcript text are never printed. Standard shell redirection can be used if persistent logs are explicitly wanted.
 
 ## Compatibility notes
 
@@ -102,7 +108,7 @@ Start compatibility testing in Notepad, then test each game in windowed, borderl
 
 ## Verification
 
-The test suite covers configuration migration and validation, strict start/end phrase matching, bounded event-log rotation, streaming resampling, VAD utterance boundaries and duration rejection, model checksum verification, and key parsing. The standard release gate is:
+The test suite covers configuration migration and validation, strict start/end phrase matching, stdout event formatting and truncation, CLI version output, streaming resampling, VAD utterance boundaries and duration rejection, model checksum verification, and key parsing. The standard release gate is:
 
 ```powershell
 cargo fmt --all -- --check

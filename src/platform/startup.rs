@@ -1,4 +1,7 @@
-use std::iter;
+use std::{
+    iter,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use windows::{
@@ -36,7 +39,8 @@ pub fn apply(enabled: bool) -> Result<()> {
     win32_result(create_result).context("failed to open the current-user startup registry key")?;
 
     let operation = if enabled {
-        let executable = std::env::current_exe().context("failed to locate the executable")?;
+        let current = std::env::current_exe().context("failed to locate the executable")?;
+        let executable = startup_executable(&current);
         let command = wide(&format!("\"{}\"", executable.display()));
         let bytes =
             unsafe { std::slice::from_raw_parts(command.as_ptr().cast::<u8>(), command.len() * 2) };
@@ -59,6 +63,15 @@ pub fn apply(enabled: bool) -> Result<()> {
     operation
 }
 
+fn startup_executable(current: &Path) -> PathBuf {
+    let gui = current.with_file_name("game-transcribe-gui.exe");
+    if gui.is_file() {
+        gui
+    } else {
+        current.to_owned()
+    }
+}
+
 fn win32_result(error: WIN32_ERROR) -> windows::core::Result<()> {
     if error == ERROR_SUCCESS {
         Ok(())
@@ -71,4 +84,26 @@ fn win32_result(error: WIN32_ERROR) -> windows::core::Result<()> {
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(iter::once(0)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn launch_at_login_prefers_the_gui_binary() {
+        let root =
+            std::env::temp_dir().join(format!("game-transcribe-startup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let console = root.join("game-transcribe.exe");
+        let gui = root.join("game-transcribe-gui.exe");
+
+        assert_eq!(startup_executable(&console), console.clone());
+        fs::write(&gui, []).unwrap();
+        assert_eq!(startup_executable(&console), gui);
+        let _ = fs::remove_dir_all(root);
+    }
 }
