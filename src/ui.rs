@@ -239,11 +239,9 @@ unsafe extern "system" fn tray_window_proc(
             unsafe { PostQuitMessage(0) };
             return LRESULT(0);
         }
-        WM_NCDESTROY => {
-            if !state_ptr.is_null() {
-                unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
-                unsafe { drop(Box::from_raw(state_ptr)) };
-            }
+        WM_NCDESTROY if !state_ptr.is_null() => {
+            unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
+            unsafe { drop(Box::from_raw(state_ptr)) };
         }
         _ => {}
     }
@@ -652,11 +650,9 @@ unsafe extern "system" fn settings_window_proc(
             let _ = unsafe { DestroyWindow(window) };
             return LRESULT(0);
         }
-        WM_NCDESTROY => {
-            if !state_ptr.is_null() {
-                unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
-                unsafe { drop(Box::from_raw(state_ptr)) };
-            }
+        WM_NCDESTROY if !state_ptr.is_null() => {
+            unsafe { SetWindowLongPtrW(window, GWLP_USERDATA, 0) };
+            unsafe { drop(Box::from_raw(state_ptr)) };
         }
         _ => {}
     }
