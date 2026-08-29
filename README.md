@@ -25,7 +25,7 @@ Start `Game Transcribe` from the Start Menu or run `game-transcribe`. The first 
 ## Safety and privacy
 
 - No cloud speech service, local HTTP server, overlay, clipboard access, process injection, or game-memory access.
-- No audio recordings, transcripts, or transcript history are written to disk or logs.
+- No audio recordings or rejected transcripts are written to disk. The bounded event log records accepted message text as described below.
 - Only one message can be pending. Microphone forwarding is disabled during recognition, focus waiting, and typing.
 - Messages without the configured start phrase at the beginning and end phrase at the end are ignored.
 - Held modifiers, unsupported keyboard-layout characters, focus changes, incomplete `SendInput` calls, and low-confidence recognition all prevent submission.
@@ -83,6 +83,17 @@ Settings cover:
 
 Settings and verified models live under the app's Windows local application-data directory. Launch-at-login uses the current user's `Run` registry key and never requires administrator rights.
 
+## Minimal event log
+
+The app writes a compact UTF-8 event log to `%LOCALAPPDATA%\GameTranscribe\GameTranscribe\data\events.log`. It records only:
+
+- VAD start and end, including completed audio duration or rejection reason;
+- whether the configured start and end phrases were detected;
+- the selected sentence after both phrases are stripped;
+- whether sending succeeded, failed, or was skipped.
+
+Each entry has a UTC timestamp and is kept on one line. The current log rotates at 256 KiB to `events.log.1`; only those two files are retained, limiting normal log storage to roughly 512 KiB. Accepted sentence text is therefore stored locally until rotation, while audio and rejected transcript text are never logged.
+
 ## Compatibility notes
 
 Typing uses the active keyboard layout of the target window. This deliberately avoids clipboard paste and Unicode packet injection, but it means a character that the target layout cannot physically produce is rejected. Supplementary Unicode characters and characters requiring Ctrl/Alt are rejected to avoid triggering shortcuts.
@@ -91,7 +102,7 @@ Start compatibility testing in Notepad, then test each game in windowed, borderl
 
 ## Verification
 
-The test suite covers configuration migration and validation, strict start/end phrase matching, streaming resampling, VAD utterance boundaries and duration rejection, model checksum verification, and key parsing. The standard release gate is:
+The test suite covers configuration migration and validation, strict start/end phrase matching, bounded event-log rotation, streaming resampling, VAD utterance boundaries and duration rejection, model checksum verification, and key parsing. The standard release gate is:
 
 ```powershell
 cargo fmt --all -- --check

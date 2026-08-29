@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod config;
 pub mod engine;
+pub mod event_log;
 pub mod message;
 pub mod model;
 pub mod platform;

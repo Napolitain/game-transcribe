@@ -9,11 +9,12 @@ use crossbeam_channel::{Receiver, Sender, bounded, select};
 use crate::{
     audio::{AudioCapture, AudioEvent},
     config::{AppConfig, ConfigStore},
-    message::extract_between_phrases,
+    event_log::EventLog,
+    message::detect_phrases,
     model,
     platform::input::{self, KeySpec, WindowToken},
     transcription::Transcriber,
-    vad::{FRAME_SAMPLES, VadEvent, VoiceDetector},
+    vad::{FRAME_SAMPLES, SAMPLE_RATE, VadEvent, VoiceDetector},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +107,7 @@ impl EngineHandle {
 }
 
 fn run_worker(store: ConfigStore, controls: Receiver<Control>, status: Arc<RwLock<Status>>) {
+    let events = EventLog::new(store.root());
     loop {
         set_status(&status, AppState::Starting, None);
         let config = match store.load() {
@@ -143,7 +145,7 @@ fn run_worker(store: ConfigStore, controls: Receiver<Control>, status: Arc<RwLoc
                 return;
             }
         };
-        match run_session(&config, &controls, &status, &transcriber) {
+        match run_session(&config, &controls, &status, &transcriber, &events) {
             SessionExit::Reload => continue,
             SessionExit::Shutdown => return,
             SessionExit::Failed(error) => {
@@ -168,6 +170,7 @@ fn run_session(
     controls: &Receiver<Control>,
     status: &Arc<RwLock<Status>>,
     transcriber: &Transcriber,
+    events: &EventLog,
 ) -> SessionExit {
     let (audio_sender, audio_receiver) = bounded(32);
     let capture = match AudioCapture::start(config.microphone.as_deref(), audio_sender) {
@@ -181,6 +184,7 @@ fn run_session(
     );
     let mut frame_buffer = Vec::<f32>::with_capacity(FRAME_SAMPLES * 2);
     let mut target = None;
+    let mut vad_active = false;
     let mut paused = false;
     set_status(status, AppState::Listening, None);
 
@@ -195,12 +199,20 @@ fn run_session(
                     vad.reset();
                     frame_buffer.clear();
                     target = None;
+                    if vad_active {
+                        events.record("vad", "end reason=paused");
+                        vad_active = false;
+                    }
                     set_status(status, if paused { AppState::Paused } else { AppState::Listening }, None);
                 }
                 Ok(Control::CancelPending) => {
                     vad.reset();
                     frame_buffer.clear();
                     target = None;
+                    if vad_active {
+                        events.record("vad", "end reason=cancelled");
+                        vad_active = false;
+                    }
                     set_status(status, if paused { AppState::Paused } else { AppState::Listening }, None);
                 }
             },
@@ -216,15 +228,22 @@ fn run_session(
                             match vad.process_frame(&frame) {
                                 Some(VadEvent::SpeechStarted) => {
                                     target = WindowToken::capture();
+                                    vad_active = true;
+                                    events.record("vad", "start");
                                     set_status(status, AppState::HearingSpeech, None);
                                 }
                                 Some(VadEvent::TooLong) => {
                                     target = None;
+                                    vad_active = false;
+                                    events.record("vad", "end reason=too_long");
                                     set_status(status, AppState::Rejected, Some("Utterance exceeded the configured limit".to_owned()));
                                 }
                                 Some(VadEvent::Utterance(audio)) => {
+                                    vad_active = false;
+                                    let duration_ms = audio.len().saturating_mul(1_000) / SAMPLE_RATE;
+                                    events.record("vad", &format!("end duration_ms={duration_ms}"));
                                     capture.set_enabled(false);
-                                    let outcome = process_utterance(config, controls, status, transcriber, target, &audio);
+                                    let outcome = process_utterance(config, controls, status, transcriber, events, target, &audio);
                                     target = None;
                                     vad.reset();
                                     frame_buffer.clear();
@@ -270,6 +289,7 @@ fn process_utterance(
     controls: &Receiver<Control>,
     status: &Arc<RwLock<Status>>,
     transcriber: &Transcriber,
+    events: &EventLog,
     target: Option<WindowToken>,
     audio: &[f32],
 ) -> PendingOutcome {
@@ -289,6 +309,14 @@ fn process_utterance(
     if let Some(outcome) = drain_controls(controls) {
         return outcome;
     }
+    let detection = detect_phrases(&transcript.text, &config.wake_phrase, &config.end_phrase);
+    events.record(
+        "markers",
+        &format!(
+            "start={} end={}",
+            detection.start_detected, detection.end_detected
+        ),
+    );
     if transcript.text.is_empty()
         || transcript.confidence < config.min_confidence
         || transcript.no_speech_probability > 0.75
@@ -301,13 +329,13 @@ fn process_utterance(
         thread::sleep(Duration::from_millis(500));
         return PendingOutcome::Continue;
     }
-    let Some(message) =
-        extract_between_phrases(&transcript.text, &config.wake_phrase, &config.end_phrase)
-    else {
+    let Some(message) = detection.message else {
         return PendingOutcome::Continue;
     };
+    events.record("sentence", message);
 
     if !target.exists() {
+        events.record("send", "skipped reason=target_closed");
         return PendingOutcome::Continue;
     }
     if !target.is_foreground() {
@@ -318,16 +346,37 @@ fn process_utterance(
             controls,
         ) {
             FocusWait::Ready => {}
-            FocusWait::Cancelled => return PendingOutcome::Continue,
-            FocusWait::Pause => return PendingOutcome::Pause,
-            FocusWait::Reload => return PendingOutcome::Reload,
-            FocusWait::Shutdown => return PendingOutcome::Shutdown,
+            FocusWait::TargetClosed => {
+                events.record("send", "skipped reason=target_closed");
+                return PendingOutcome::Continue;
+            }
+            FocusWait::TimedOut => {
+                events.record("send", "skipped reason=focus_timeout");
+                return PendingOutcome::Continue;
+            }
+            FocusWait::Cancelled => {
+                events.record("send", "skipped reason=cancelled");
+                return PendingOutcome::Continue;
+            }
+            FocusWait::Pause => {
+                events.record("send", "skipped reason=paused");
+                return PendingOutcome::Pause;
+            }
+            FocusWait::Reload => {
+                events.record("send", "skipped reason=settings_reloaded");
+                return PendingOutcome::Reload;
+            }
+            FocusWait::Shutdown => {
+                events.record("send", "skipped reason=shutdown");
+                return PendingOutcome::Shutdown;
+            }
         }
     }
 
     let open_key = match KeySpec::parse(&config.open_key) {
         Ok(key) => key,
         Err(error) => {
+            events.record("send", "failed reason=invalid_open_key");
             set_error(status, &error);
             thread::sleep(Duration::from_millis(750));
             return PendingOutcome::Continue;
@@ -336,6 +385,7 @@ fn process_utterance(
     let submit_key = match KeySpec::parse(&config.submit_key) {
         Ok(key) => key,
         Err(error) => {
+            events.record("send", "failed reason=invalid_submit_key");
             set_error(status, &error);
             thread::sleep(Duration::from_millis(750));
             return PendingOutcome::Continue;
@@ -349,10 +399,12 @@ fn process_utterance(
         submit_key,
         Duration::from_millis(u64::from(config.typing_delay_ms)),
     ) {
+        events.record("send", &format!("failed error={error}"));
         set_error(status, &error);
         thread::sleep(Duration::from_millis(750));
         return PendingOutcome::Continue;
     }
+    events.record("send", "success");
     set_status(status, AppState::Sent, None);
     thread::sleep(Duration::from_millis(350));
     PendingOutcome::Continue
@@ -378,6 +430,8 @@ fn drain_controls(controls: &Receiver<Control>) -> Option<PendingOutcome> {
 
 enum FocusWait {
     Ready,
+    TargetClosed,
+    TimedOut,
     Cancelled,
     Pause,
     Reload,
@@ -392,7 +446,7 @@ fn wait_for_focus(
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if !target.exists() {
-            return FocusWait::Cancelled;
+            return FocusWait::TargetClosed;
         }
         if target.is_foreground() {
             return FocusWait::Ready;
@@ -406,7 +460,7 @@ fn wait_for_focus(
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
         }
     }
-    FocusWait::Cancelled
+    FocusWait::TimedOut
 }
 
 fn wait_for_reload(controls: &Receiver<Control>) -> bool {
